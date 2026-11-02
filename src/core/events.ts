@@ -1,0 +1,36 @@
+// Todo lo que pasa dentro del agente sale como un evento. La TUI, el modo headless,
+// las sesiones y los tests solo escuchan eventos: ninguno conoce el loop por dentro
+import type { PermissionRequest } from './permissions'
+import type { StopReason } from './provider'
+import type { QuestionRequest } from './questions'
+import type { Task } from './tasks'
+import type { Message, Usage } from './types'
+
+export type AgentEventBody =
+  | { type: 'turn_start'; turn: number }
+  | { type: 'text_delta'; text: string }
+  | { type: 'thinking_delta'; text: string }
+  | { type: 'tool_start'; toolUseId: string; name: string; input: unknown }
+  | {
+      type: 'tool_end'
+      toolUseId: string
+      name: string
+      result: string
+      isError: boolean
+      durationMs: number
+    }
+  | { type: 'message_added'; message: Message } // las sesiones persisten escuchando esto
+  | { type: 'usage'; usage: Usage }
+  | { type: 'turn_end'; turn: number; stopReason: StopReason }
+  | { type: 'error'; error: string; retryable: boolean }
+  | { type: 'done'; reason: 'completed' | 'aborted' | 'max_turns' | 'error' }
+  | { type: 'permission_request'; request: PermissionRequest } // la UI llama a request.respond()
+  | { type: 'question_request'; request: QuestionRequest }
+  | { type: 'tasks_updated'; tasks: Task[] }
+  | { type: 'notice'; level: 'info' | 'error'; text: string } // salida de los /comandos
+  | { type: 'cleared' } // /clear: la TUI empieza de cero
+
+// parentAgentId lo usan los subagentes
+type EventBase = { agentId: string; parentAgentId?: string }
+
+export type AgentEvent = EventBase & AgentEventBody
