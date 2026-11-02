@@ -1,0 +1,9 @@
+preload = ["@opentui/solid/preload"]
+
+# Lost tests de la TUI también necesitan el plugin de Solid
+[test]
+preload = ["@opentui/solid/preload"]
+
+[fmt]
+semi = false
+singleQuote = true
