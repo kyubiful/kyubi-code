@@ -11,18 +11,20 @@ export type HeadlessOptions = {
   model?: string
   mode?: PermissionMode
   interactive: boolean // false: las preguntas de permisos se deniegan solas
+  resume?: string // id de la sesión o 'latest'
 }
 
 export async function runHeadless(opts: HeadlessOptions): Promise<void> {
-  const harness = await Harness.create(
-    process.cwd(),
-    {
+  const harness = await Harness.create({
+    cwd: process.cwd(),
+    overrides: {
       provider: opts.provider,
       model: opts.model,
       permissions: { mode: opts.mode },
     },
-    opts.interactive,
-  )
+    interactive: opts.interactive,
+    resume: opts.resume,
+  })
   const controller = new AbortController()
   process.once('SIGINT', () => controller.abort())
 
@@ -73,6 +75,8 @@ export async function runHeadless(opts: HeadlessOptions): Promise<void> {
     `tokens: in ${formatTokens(total.inputTokens)} (cached ${formatTokens(total.cachedTokens ?? 0)})` +
       ` / out ${formatTokens(total.outputTokens)} - ${context.percent}% de contexto`,
   )
+  await harness.session.flush()
+  console.error(`sesión: ${harness.session.id}`)
   if (!ok) process.exitCode = 1
 }
 

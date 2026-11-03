@@ -10,6 +10,8 @@ const { values, positionals } = parseArgs({
     provider: { type: 'string' },
     model: { type: 'string', short: 'm' },
     mode: { type: 'string' },
+    continue: { type: 'boolean', short: 'c' },
+    resume: { type: 'string', short: 'r' },
     'no-interactive': { type: 'boolean' },
     help: { type: 'boolean', short: 'h' },
   },
@@ -25,10 +27,14 @@ if (values.help) {
       --provider <id>    Provider a usar (por defecto: el de la config)
   -m, --model <id>       Modelo a usar
       --mode <modo>      Modo de permisos: default, acceptEdits o plan
+  -c  --continue         Retoma la última sesión de este proyecto
+  -r  --resume <id>      Retoma una sesión concreta (vale el comienzo del id)
       --no-interactive   No preguntar permisos (lo que haya que preguntar se deniega)
   -h, --help             Muestra esta ayuda`)
   process.exit(0)
 }
+
+const resume = values.resume ?? (values.continue ? 'latest' : undefined)
 
 try {
   const [command, arg] = positionals
@@ -54,13 +60,14 @@ try {
       model: values.model,
       mode: parseMode(values.mode),
       interactive: !values['no-interactive'],
+      resume,
     })
   } else {
     // Inicia la TUI
     await import('@opentui/solid/preload')
     const { startTui } = await import('./ui/app.tsx')
 
-    await startTui()
+    await startTui({ resume })
   }
 } catch (error) {
   console.error(`Error: ${error instanceof Error ? error.message : error}`)

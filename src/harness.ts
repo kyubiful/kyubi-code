@@ -20,9 +20,10 @@ import { Permissions, type PermissionMode } from './core/permissions'
 import { findModel, type ModelInfo, type Provider } from './core/provider'
 import { TaskStore } from './core/tasks'
 import { ToolRegistry, errorMessage } from './core/tools'
-import { newId, type Message } from './core/types'
+import { type Message } from './core/types'
 import { UsageTracker } from './core/usage'
 import { createProvider } from './providers'
+import { SessionStore } from './session/store'
 import { buildinTools } from './tools'
 import { echoTool } from './tools/echo'
 import { questionTool } from './tools/question'
@@ -36,6 +37,14 @@ export type HarnessOptions = {
   system?: string // system prompt (create() lo construye con buildSystemPrompt)
   interactive?: boolean // false: nadie puede responder a las preguntas de permisos
   commands?: Command[] // comandos .md del usuario y del proyecto
+  session?: SessionStore // sesión retomada. Si no, se crea una nueva
+}
+
+export type CreateOption = {
+  cwd: string
+  overrides?: ConfigInput // flags de la CLI
+  interactive?: boolean
+  resume?: string // id de la sesión, o 'latest' para la más reciente (--continue)
 }
 
 export class Harness {
@@ -47,22 +56,32 @@ export class Harness {
   readonly commands: CommandRegistry
   readonly usage = new UsageTracker()
   readonly tasks = new TaskStore()
-  readonly sessionId = newId()
-  // Cambian con /model y /clear
+  // Cambian con /model y /clear y /resume
   provider: Provider
   model: ModelInfo
   agent: Agent
+  session: SessionStore
 
   // Carga la configuración y crea el harness (lo que usan la CLI y la TUI)
-  static async create(
-    cwd: string,
-    overrides: ConfigInput = {},
-    interactive = true,
-  ): Promise<Harness> {
+  static async create(opts: CreateOption): Promise<Harness> {
+    const { cwd, overrides, interactive } = opts
     const config = await loadConfig(cwd, overrides)
     const system = await buildSystemPrompt(cwd)
     const commands = await loadCustomCommands(cwd)
-    return new Harness({ config, cwd, interactive, system, commands })
+    let session: SessionStore | undefined
+    if (opts.resume === 'latest') {
+      session = (await SessionStore.latest(cwd)) ?? undefined
+    } else if (opts.resume) {
+      session = await SessionStore.find(cwd, opts.resume)
+    }
+    return new Harness({
+      config,
+      cwd,
+      interactive,
+      system,
+      commands,
+      session,
+    })
   }
 
   constructor(opts: HarnessOptions) {
@@ -94,7 +113,9 @@ export class Harness {
       ...builtinCommands(),
       ...(opts.commands ?? []),
     ])
-    this.agent = this.createAgent([])
+    this.session = opts.session ?? SessionStore.create(this.cwd)
+    this.tasks.tasks = this.session.tasks()
+    this.agent = this.createAgent(this.session.messages())
   }
 
   private createAgent(messages: Message[]): Agent {
@@ -104,7 +125,7 @@ export class Harness {
       tools: this.tools,
       system: this.system,
       cwd: this.cwd,
-      sessionId: this.sessionId,
+      sessionId: this.session.id,
       permissions: this.permissions,
       reminder: () => this.tasks.reminder(),
       messages,
@@ -143,9 +164,15 @@ export class Harness {
 
   // Conversación nueva
   clear(): void {
-    this.agent = this.createAgent([])
+    this.loadSession(SessionStore.create(this.cwd))
+  }
+
+  // Cambia a otra sesión (nueva o retomada)
+  loadSession(session: SessionStore): void {
+    this.session = session
+    this.tasks.tasks = session.tasks()
     this.usage.reset()
-    this.tasks.tasks = []
+    this.agent = this.createAgent(session.messages())
   }
 
   // Lo que pasa cuando el usuario envía un mensaje
@@ -157,8 +184,28 @@ export class Harness {
       text = prompt
     }
     for await (const event of this.agent.run(text, signal)) {
-      if (event.type === 'usage') this.usage.add(event.usage)
+      this.record(event)
       yield event
+    }
+  }
+
+  // Lo que hay que guardar en cada evento
+  private record(event: AgentEvent): void {
+    if (event.parentAgentId) return // los subagentes tienen su propia sesión
+    switch (event.type) {
+      case 'message_added':
+        this.session.append({ type: 'message', message: event.message })
+        break
+      case 'usage':
+        this.usage.add(event.usage)
+        this.session.append({
+          type: 'usage',
+          usage: event.usage,
+          model: this.model.id,
+        })
+        break
+      case 'tasks_updated':
+        this.session.append({ type: 'tasks', tasks: event.tasks })
     }
   }
 
@@ -172,6 +219,7 @@ export class Harness {
     const emit = (body: AgentEventBody) =>
       channel.push({ ...body, agentId: 'main' })
     let prompt: string | undefined
+    const sessionBefore = this.session
 
     this.commands
       .get(name)!
@@ -181,7 +229,10 @@ export class Harness {
         print: (text, level = 'info') => emit({ type: 'notice', level, text }),
       })
       .then((result) => {
-        if (name === 'clear') emit({ type: 'cleared' })
+        // /clear, /resume...: si cambió la sesión, la TUI tiene que redibujarse
+        if (this.session !== sessionBefore) {
+          emit({ type: 'session_loaded', messages: this.agent.messages })
+        }
         if (result.type === 'prompt') prompt = result.prompt
       })
       .catch((error) =>

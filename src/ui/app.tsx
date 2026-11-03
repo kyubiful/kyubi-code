@@ -12,7 +12,7 @@ import { Harness } from '../harness.ts'
 import { ChatItemView } from './components/chat-item.tsx'
 import { PermissionDialog } from './components/permission-dialog.tsx'
 import { QuestionDialog } from './components/question-dialog.tsx'
-import { notice, reduce, type ChatItem } from './store.ts'
+import { itemsFromMessages, notice, reduce, type ChatItem } from './store.ts'
 import { theme } from './theme.ts'
 import { Logo } from './components/logo.tsx'
 
@@ -35,10 +35,15 @@ export function App(props: { harness: Harness; onExit: () => void }) {
     renderer.nativeScene,
   )
 
-  const [items, setItems] = createSignal<ChatItem[]>([])
+  // Si se retoma una sesión, la pantalla empieza con su historial
+  const [items, setItems] = createSignal<ChatItem[]>(
+    itemsFromMessages(harness.agent.messages),
+  )
   const [busy, setBusy] = createSignal(false)
   const [dialog, setDialog] = createSignal<Dialog | null>(null)
-  const [tasks, setTasks] = createSignal<Task[]>([])
+  const [tasks, setTasks] = createSignal<Task[]>(
+    structuredClone(harness.tasks.tasks),
+  )
   const [queued, setQueued] = createSignal<string[]>([])
   const [mode, setMode] = createSignal(harness.permissions.mode)
   const [expanded, setExpanded] = createSignal(false)
@@ -87,8 +92,8 @@ export function App(props: { harness: Harness; onExit: () => void }) {
           case 'tasks_updated':
             setTasks(event.tasks)
             break
-          case 'cleared':
-            setTasks([])
+          case 'session_loaded':
+            setTasks(structuredClone(harness.tasks.tasks))
             setUsage('')
             break
           case 'usage':
@@ -287,8 +292,11 @@ export function App(props: { harness: Harness; onExit: () => void }) {
   )
 }
 
-export async function startTui(): Promise<void> {
-  const harness = await Harness.create(process.cwd())
+export async function startTui(opts: { resume?: string } = {}): Promise<void> {
+  const harness = await Harness.create({
+    cwd: process.cwd(),
+    resume: opts.resume,
+  })
   let renderer: { destroy(): void } | undefined
   await render(
     () => {
@@ -296,8 +304,9 @@ export async function startTui(): Promise<void> {
       return (
         <App
           harness={harness}
-          onExit={() => {
+          onExit={async () => {
             renderer?.destroy()
+            await harness.session.flush() // que no se pierda lo último de la sesión
             process.exit(0)
           }}
         />

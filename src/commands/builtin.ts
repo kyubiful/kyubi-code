@@ -1,7 +1,9 @@
 // Comandos que vienen con el harness. Los pasos siguientes añaden más
 import { configPaths } from '../core/config'
 import type { PermissionMode } from '../core/permissions'
+import { messageText } from '../core/types.ts'
 import { providerIds } from '../providers'
+import { listSessionFiles, SessionStore } from '../session/store.ts'
 import type { Command } from './types'
 
 const handled = { type: 'handled' } as const
@@ -113,6 +115,35 @@ export function builtinCommands(): Command[] {
         const { loginProvider } = await import('../providers/index.ts')
         await loginProvider(args, print)
         print(`Sesión iniciada en ${args}`)
+        return handled
+      },
+    },
+    {
+      name: 'resume',
+      description: 'Retoma una sesión anterior (sin id, lista las recientes)',
+      argsHint: '[id]',
+      source: 'builtin',
+      async run({ args, harness, print }) {
+        if (args) {
+          harness.loadSession(await SessionStore.find(harness.cwd, args))
+          print(`Sesión ${harness.session.id.slice(0, 8)} retomada`)
+          return handled
+        }
+        const files = (await listSessionFiles(harness.cwd)).slice(0, 10)
+        if (!files.length) {
+          print('No hay sesiones guardadas en este proyecto')
+          return handled
+        }
+        const lines = await Promise.all(
+          files.map(async (file) => {
+            const first = (await SessionStore.open(file.path)).messages()[0]
+            const preview = first ? messageText(first).slice(0, 60) : '(vacía)'
+            return `${file.id.slice(0, 8)} ${file.mtime.toLocaleString()} ${preview}`
+          }),
+        )
+        print(
+          `${lines.join('\n')}\n\nUsa /resume <id> (vale el comienzo del id)`,
+        )
         return handled
       },
     },

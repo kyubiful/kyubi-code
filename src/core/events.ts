@@ -28,7 +28,7 @@ export type AgentEventBody =
   | { type: 'question_request'; request: QuestionRequest }
   | { type: 'tasks_updated'; tasks: Task[] }
   | { type: 'notice'; level: 'info' | 'error'; text: string } // salida de los /comandos
-  | { type: 'cleared' } // /clear: la TUI empieza de cero
+  | { type: 'session_loaded'; messages: Message[] } // /clear, /resume: la TUI se redibuja
 
 // parentAgentId lo usan los subagentes
 type EventBase = { agentId: string; parentAgentId?: string }

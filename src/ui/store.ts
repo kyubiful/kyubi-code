@@ -2,7 +2,7 @@
 // `reduce` es una función pura: (items, evento) -> items nuevos. Así se puede
 // testear sin pintar nada, y la TUI solo tiene que dibujar `items`.
 import type { AgentEvent } from '../core/events'
-import { newId } from '../core/types'
+import { newId, type Message } from '../core/types'
 
 export type ChatItem =
   | { kind: 'user'; id: string; text: string }
@@ -93,8 +93,8 @@ export function reduce(items: ChatItem[], event: AgentEvent): ChatItem[] {
       ]
     case 'notice':
       return [...items, notice(event.text, event.level)]
-    case 'cleared':
-      return []
+    case 'session_loaded':
+      return itemsFromMessages(event.messages)
     case 'done':
       if (event.reason === 'aborted') return [...items, notice('Cancelado')]
       if (event.reason === 'max_turns') {
@@ -109,6 +109,45 @@ export function reduce(items: ChatItem[], event: AgentEvent): ChatItem[] {
     default:
       return items
   }
+}
+
+// Reconstruye la pantalla a partir de un historial (al retomar una sesión)
+export function itemsFromMessages(messages: readonly Message[]): ChatItem[] {
+  const items: ChatItem[] = []
+  for (const message of messages) {
+    for (const block of message.content) {
+      if (block.type === 'text') {
+        items.push(
+          message.role === 'user'
+            ? { kind: 'user', id: newId(), text: block.text }
+            : {
+                kind: 'assistant',
+                id: newId(),
+                text: block.text,
+                streaming: false,
+              },
+        )
+      } else if (block.type === 'tool_use') {
+        items.push({
+          kind: 'tool',
+          id: block.id,
+          name: block.name,
+          input: block.input,
+          status: 'running',
+          agentId: 'main',
+        })
+      } else if (block.type === 'tool_result') {
+        const tool = items.find(
+          (item) => item.kind === 'tool' && item.id === block.toolUseId,
+        )
+        if (tool?.kind === 'tool') {
+          tool.status = block.isError ? 'error' : 'done'
+          tool.result = block.content
+        }
+      }
+    }
+  }
+  return items
 }
 
 export function notice(
