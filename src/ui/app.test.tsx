@@ -20,7 +20,7 @@ async function start(script?: MockScript) {
   })
   setup = await testRender(() => <App harness={harness} onExit={() => {}} />, {
     width: 80,
-    height: 30,
+    height: 60,
   })
   await setup.renderOnce()
   return setup

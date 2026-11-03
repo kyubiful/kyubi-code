@@ -1,9 +1,12 @@
-// Comandos que vienen con el harness. Los pasos siguientes añaden más
+// Comandos que vienen con el harness. Los pasos siguientes añaden más.
 import { configPaths } from '../core/config'
 import type { PermissionMode } from '../core/permissions'
-import { messageText } from '../core/types.ts'
-import { providerIds } from '../providers'
-import { listSessionFiles, SessionStore } from '../session/store.ts'
+import { messageText } from '../core/types'
+import { providerIds } from '../providers/index'
+import { resolve } from 'node:path'
+import { checkpointsAfter, type RewindMode } from '../session/checkpoints'
+import { deleteSession, exportMarkdown, listSessions } from '../session/manager'
+import { SessionStore } from '../session/store'
 import type { Command } from './types'
 
 const handled = { type: 'handled' } as const
@@ -46,7 +49,7 @@ export function builtinCommands(): Command[] {
             .models()
             .map(
               (m) =>
-                `${m.id === harness.model.id ? '❯' : ' '} ${m.id} — ${m.name}`,
+                `${m.id === harness.model.id ? '❯' : ' '} ${m.id} - ${m.name}`,
             )
           print(
             `Modelo actual: ${harness.provider.id}/${harness.model.id}\n\n${models.join('\n')}\n\nProviders: ${providerIds.join(', ')}`,
@@ -120,30 +123,153 @@ export function builtinCommands(): Command[] {
     },
     {
       name: 'resume',
-      description: 'Retoma una sesión anterior (sin id, lista las recientes)',
+      description: 'Retoma una sesión anterior',
+      argsHint: '[id]',
+      source: 'builtin',
+      async run({ args, harness, print, select }) {
+        let id = args
+        if (!id) {
+          const sessions = (await listSessions(harness.cwd)).filter(
+            (s) => s.id !== harness.session.id,
+          )
+          if (!sessions.length) {
+            print('No hay otras sesiones en este proyecto')
+            return handled
+          }
+          const index = await select(
+            'Retomar sesión',
+            sessions.slice(0, 20).map((session) => ({
+              label: session.title,
+              description: `${session.id.slice(0, 8)} · ${new Date(session.updatedAt).toLocaleString()} · ${session.messageCount} mensajes`,
+            })),
+          )
+          if (index === null) return handled
+          id = sessions[index]!.id
+        }
+        harness.loadSession(await SessionStore.find(harness.cwd, id))
+        print(`Sesión retomada: ${harness.session.title ?? harness.session.id}`)
+        return handled
+      },
+    },
+    {
+      name: 'rename',
+      description: 'Cambia el título de la sesión',
+      argsHint: '<título>',
+      source: 'builtin',
+      async run({ args, harness, print }) {
+        if (!args) {
+          print('Uso: /rename <título>', 'error')
+          return handled
+        }
+        harness.rename(args)
+        print(`Sesión renombrada: ${args}`)
+        return handled
+      },
+    },
+    {
+      name: 'delete',
+      description: 'Borra una sesión guardada (sin id, la actual)',
       argsHint: '[id]',
       source: 'builtin',
       async run({ args, harness, print }) {
-        if (args) {
-          harness.loadSession(await SessionStore.find(harness.cwd, args))
-          print(`Sesión ${harness.session.id.slice(0, 8)} retomada`)
-          return handled
-        }
-        const files = (await listSessionFiles(harness.cwd)).slice(0, 10)
-        if (!files.length) {
-          print('No hay sesiones guardadas en este proyecto')
-          return handled
-        }
-        const lines = await Promise.all(
-          files.map(async (file) => {
-            const first = (await SessionStore.open(file.path)).messages()[0]
-            const preview = first ? messageText(first).slice(0, 60) : '(vacía)'
-            return `${file.id.slice(0, 8)} ${file.mtime.toLocaleString()} ${preview}`
-          }),
-        )
+        const id = await deleteSession(
+          harness.cwd,
+          args || harness.session.id,
+        ).catch(() => null)
+        if (!args || id === harness.session.id) harness.clear()
         print(
-          `${lines.join('\n')}\n\nUsa /resume <id> (vale el comienzo del id)`,
+          id ? `Sesión ${id.slice(0, 8)} borrada` : 'No había nada que borrar',
         )
+        return handled
+      },
+    },
+    {
+      name: 'fork',
+      description: 'Copia la conversación a una sesión nueva y sigue en ella',
+      source: 'builtin',
+      async run({ harness, print }) {
+        const original = harness.session.id
+        harness.fork()
+        print(
+          `Nueva sesión ${harness.session.id.slice(0, 8)} (copia de ${original.slice(0, 8)})`,
+        )
+        return handled
+      },
+    },
+    {
+      name: 'rewind',
+      description:
+        'Vuelve a un mensaje anterior (y opcionalmente deshace los cambios de archivos)',
+      source: 'builtin',
+      async run({ harness, print, select }) {
+        // Mensajes escritos por el usuario en la rama activa, del más reciente al más antiguo
+        const branch = harness.session.branch()
+        const prompts = branch
+          .flatMap((entry) => (entry.type === 'message' ? [entry.message] : []))
+          .filter(
+            (m) =>
+              m.role === 'user' && m.content.some((b) => b.type === 'text'),
+          )
+          .reverse()
+        if (!prompts.length) {
+          print('No hay mensajes a los que volver')
+          return handled
+        }
+        const index = await select(
+          'Volver a antes de este mensaje',
+          prompts
+            .slice(0, 20)
+            .map((m) => ({ label: messageText(m).slice(0, 70) })),
+        )
+        if (index === null) return handled
+        const target = prompts[index]!
+
+        let mode: RewindMode = 'conversation'
+        const changes = checkpointsAfter(branch, target.id)
+        if (changes.length) {
+          const modes: RewindMode[] = ['both', 'conversation', 'code']
+          const choice = await select('¿Qué quieres deshacer?', [
+            {
+              label: 'Conversación y código',
+              description: `${changes.length} cambio/s de archivos`,
+            },
+            {
+              label: 'Solo la conversación',
+              description: 'los archivos se quedan como están',
+            },
+            {
+              label: 'Solo el código',
+              description: 'la conversación sigue igual',
+            },
+          ])
+          if (choice === null) return handled
+          mode = modes[choice]!
+        }
+        const { restored, text } = await harness.rewind(target.id, mode)
+        if (restored.length) {
+          print(
+            `Archivos restaurados:\n${restored.map((path) => `  ${path}`).join('\n')}`,
+          )
+          print(
+            'Ojo: lo que hiciera bash (rm, mv, instalar paquetes...) no se puede deshacer',
+          )
+        }
+        if (mode !== 'code') print(`Has vuelto a antes de: "${text}"`)
+        return handled
+      },
+    },
+    {
+      name: 'export',
+      description: 'Guarda la conversación como Markdown',
+      argsHint: '[archivo]',
+      source: 'builtin',
+      async run({ args, harness, print }) {
+        const path = resolve(
+          harness.cwd,
+          args || `kyubi-${harness.session.id.slice(0, 8)}.md`,
+        )
+        await Bun.write(path, exportMarkdown(harness.session))
+        print(`Exportado a ${path}`)
         return handled
       },
     },

@@ -21,6 +21,11 @@ export const ConfigSchema = z.object({
   hooks: z.record(z.string(), z.unknown()).default({}),
   mcpServers: z.record(z.string(), z.unknown()).default({}),
   env: z.record(z.string(), z.string()).default({}),
+  sessions: z
+    .object({
+      retentionDays: z.number().int().min(0).default(30), // 0 = no borrar nunca
+    })
+    .prefault({}),
 })
 
 export type Config = z.infer<typeof ConfigSchema>

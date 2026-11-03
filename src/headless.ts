@@ -1,6 +1,7 @@
 // Modo headless
 import { createInterface } from 'node:readline/promises'
 import type { PermissionMode, PermissionRequest } from './core/permissions'
+import type { SelectRequest } from './core/events'
 import type { QuestionAnswer, QuestionRequest } from './core/questions'
 import { formatTokens } from './core/usage'
 import { Harness } from './harness'
@@ -51,6 +52,9 @@ export async function runHeadless(opts: HeadlessOptions): Promise<void> {
       case 'question_request':
         await askQuestions(ev.request)
         break
+      case 'select_request':
+        await askSelect(ev.request)
+        break
       case 'tasks_updated':
         console.error(
           `Tareas: ${ev.tasks.map((t) => `${t.id}:${t.status}`).join(' ')}`,
@@ -75,9 +79,25 @@ export async function runHeadless(opts: HeadlessOptions): Promise<void> {
     `tokens: in ${formatTokens(total.inputTokens)} (cached ${formatTokens(total.cachedTokens ?? 0)})` +
       ` / out ${formatTokens(total.outputTokens)} - ${context.percent}% de contexto`,
   )
-  await harness.session.flush()
+  await harness.flush()
   console.error(`sesión: ${harness.session.id}`)
   if (!ok) process.exitCode = 1
+}
+
+async function askSelect(request: SelectRequest): Promise<void> {
+  console.error(`\n${request.title}`)
+  request.options.forEach((option, i) => {
+    const desc = option.description ? `- ${option.description}` : ''
+    console.error(`  ${i + 1}. ${option.label}${desc}`)
+  })
+  const rl = createInterface({ input: process.stdin, output: process.stderr })
+  const answer = Number(
+    (await rl.question('Número (vacío = cancelar): ')).trim(),
+  )
+  rl.close()
+  request.respond(
+    answer >= 1 && answer <= request.options.length ? answer - 1 : null,
+  )
 }
 
 async function askPermission(request: PermissionRequest): Promise<void> {

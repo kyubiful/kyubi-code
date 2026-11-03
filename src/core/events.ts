@@ -5,6 +5,7 @@ import type { StopReason } from './provider'
 import type { QuestionRequest } from './questions'
 import type { Task } from './tasks'
 import type { Message, Usage } from './types'
+import type { FileChange } from './tools'
 
 export type AgentEventBody =
   | { type: 'turn_start'; turn: number }
@@ -29,6 +30,16 @@ export type AgentEventBody =
   | { type: 'tasks_updated'; tasks: Task[] }
   | { type: 'notice'; level: 'info' | 'error'; text: string } // salida de los /comandos
   | { type: 'session_loaded'; messages: Message[] } // /clear, /resume: la TUI se redibuja
+  | { type: 'file_changed'; change: FileChange } // write/edit: se guarda como checkpoint
+  | { type: 'select_request'; request: SelectRequest } // un /comando pide elegir algo
+
+// Elegir una opción de la lista (lo usan /resume, /rewind...)
+export type SelectRequest = {
+  requestId: string
+  title: string
+  options: { label: string; description?: string }[]
+  respond(index: number | null): void // null = cancelado
+}
 
 // parentAgentId lo usan los subagentes
 type EventBase = { agentId: string; parentAgentId?: string }
