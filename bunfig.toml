@@ -2,7 +2,7 @@ preload = ["@opentui/solid/preload"]
 
 # Lost tests de la TUI también necesitan el plugin de Solid
 [test]
-preload = ["@opentui/solid/preload"]
+preload = ["@opentui/solid/preload", "./src/test-setup.ts"]
 
 [fmt]
 semi = false

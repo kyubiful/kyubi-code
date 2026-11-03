@@ -174,3 +174,26 @@ test('todos los eventos llevan el agentId', async () => {
   const events = await collect(agent.run('hi', signal()))
   expect(events.every((e) => e.agentId === 'main')).toBe(true)
 })
+test('tool_use → tool_result → texto: dos turnos', async () => {
+  const agent = makeAgent([
+    { text: 'uso echo', toolCalls: [{ name: 'echo', input: { text: 'x' } }] },
+    { text: 'listo' },
+  ])
+  const events = await collect(agent.run('hi', signal()))
+  expect(events.filter((e) => e.type === 'turn_start')).toHaveLength(2)
+  expect(events.find((e) => e.type === 'tool_end')).toMatchObject({
+    name: 'echo',
+    result: 'x',
+    isError: false,
+  })
+  expect(agent.messages.map((m) => m.role)).toEqual([
+    'user',
+    'assistant',
+    'user',
+    'assistant',
+  ])
+  expect(agent.messages[2]!.content[0]).toMatchObject({
+    type: 'tool_result',
+    content: 'x',
+  })
+})

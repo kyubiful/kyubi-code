@@ -8,16 +8,16 @@ import {
   mergeConfig,
   updateConfigFile,
 } from './config'
-import { config, permission } from 'node:process'
 
 let dir: string
+const realHome = process.env.KYUBI_HOME
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'kyubi-config-'))
   process.env.KYUBI_HOME = join(dir, 'home')
 })
 afterEach(async () => {
-  delete process.env.KYUBI_HOME
+  process.env.KYUBI_HOME = realHome
   await rm(dir, { recursive: true, force: true })
 })
 

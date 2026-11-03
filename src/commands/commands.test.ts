@@ -11,12 +11,13 @@ import { loadCustomCommands } from './custom.ts'
 import { parseCommand } from './index.ts'
 
 let dir: string
+const realHome = process.env.KYUBI_HOME
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'kyubi-commands-'))
   process.env.KYUBI_HOME = join(dir, 'home')
 })
 afterEach(async () => {
-  delete process.env.KYUBI_HOME
+  process.env.KYUBI_HOME = realHome
   await rm(dir, { recursive: true, force: true })
 })
 
@@ -32,7 +33,11 @@ function harness(
 }
 
 async function submit(h: Harness, text: string): Promise<AgentEvent[]> {
-  return Array.fromAsync(h.submit(text, new AbortController().signal))
+  const events = await Array.fromAsync(
+    h.submit(text, new AbortController().signal),
+  )
+  await h.session.flush() // antes de que afterEach borre la carpeta
+  return events
 }
 
 const notices = (events: AgentEvent[]) =>
@@ -66,7 +71,7 @@ test('/clear borra la conversación', async () => {
   expect(h.agent.messages).toHaveLength(2)
   const events = await submit(h, '/clear')
   expect(h.agent.messages).toHaveLength(0)
-  expect(events.some((e) => e.type === 'cleared')).toBe(true)
+  expect(events.some((e) => e.type === 'session_loaded')).toBe(true)
 })
 
 test('/model cambia de modelo conservando la conversación', async () => {

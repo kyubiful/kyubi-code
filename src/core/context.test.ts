@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { buildSystemPrompt, loadInstructions } from './context.ts'
 
 let dir: string
+const realHome = process.env.KYUBI_HOME
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'kyubi-context-'))
@@ -12,7 +13,7 @@ beforeEach(async () => {
   Bun.spawnSync(['git', 'init', '-q', '-b', 'main'], { cwd: join(dir) })
 })
 afterEach(async () => {
-  delete process.env.KYUBI_HOME
+  process.env.KYUBI_HOME = realHome
   await rm(dir, { recursive: true, force: true })
 })
 
