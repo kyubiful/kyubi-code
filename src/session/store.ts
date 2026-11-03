@@ -91,13 +91,23 @@ export class SessionStore {
     return newest ? SessionStore.open(newest.path) : null
   }
 
-  append(body: SessionEntryBody): SessionEntry {
+  // Añade una entrada. Por defecto cuelga de la hoja actual. Con `parentId`
+  // se puede colgar de otro punto del árbol (rewind)
+  append(
+    body: SessionEntryBody,
+    parentId: string | null = this.leafId,
+  ): SessionEntry {
     const entry: SessionEntry = {
       id: body.type === 'message' ? body.message.id : newId(),
-      parentId: this.leafId,
+      parentId,
       timestamp: new Date().toISOString(),
       ...body,
     }
+    this.write(entry)
+    return entry
+  }
+
+  private write(entry: SessionEntry) {
     this.index(entry)
     const line = `${JSON.stringify(entry)}\n`
     // Las escrituras se encadenan para que nunca se mezclen ni se desordenen
@@ -115,6 +125,26 @@ export class SessionStore {
         this.writeError = error
       })
     return entry
+  }
+
+  // Sesión nueva con una copia de la rama activa (hasta `uptoId`, incluido)
+  fork(uptoId: string | null = this.leafId): SessionStore {
+    const forked = SessionStore.create(this.header.cwd, {
+      parentSessionId: this.id,
+    })
+    for (const entry of this.branch(uptoId)) {
+      if (entry.type !== 'rewind')
+        forked.write({ ...entry, parentId: forked.leafId })
+    }
+    return forked
+  }
+
+  // Título del último `meta` de tipo title (generado o puesto con /rename)
+  get title(): string | undefined {
+    const meta = this.entries.findLast(
+      (e) => e.type === 'meta' && e.key === 'title',
+    )
+    return meta?.type === 'meta' ? String(meta.value) : undefined
   }
 
   // Espera a que se hayan escrito todas las entradas (antes de salir, en tests...)

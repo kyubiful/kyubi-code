@@ -4,21 +4,24 @@ import { SyntaxStyle, type TextareaRenderable } from '@opentui/core'
 import { render, useKeyboard, useRenderer } from '@opentui/solid'
 import { createSignal, For, Index, Show } from 'solid-js'
 import type { Command } from '../commands/types.ts'
-import type { PermissionRequest } from '../core/permissions.ts'
-import type { QuestionRequest } from '../core/questions.ts'
-import type { Task } from '../core/tasks.ts'
-import { formatTokens } from '../core/usage.ts'
-import { Harness } from '../harness.ts'
-import { ChatItemView } from './components/chat-item.tsx'
-import { PermissionDialog } from './components/permission-dialog.tsx'
-import { QuestionDialog } from './components/question-dialog.tsx'
-import { itemsFromMessages, notice, reduce, type ChatItem } from './store.ts'
-import { theme } from './theme.ts'
-import { Logo } from './components/logo.tsx'
+import type { SelectRequest } from '../core/events'
+import type { PermissionRequest } from '../core/permissions'
+import type { QuestionRequest } from '../core/questions'
+import type { Task } from '../core/tasks'
+import { formatTokens } from '../core/usage'
+import { Harness } from '../harness'
+import { ChatItemView } from './components/chat-item'
+import { PermissionDialog } from './components/permission-dialog'
+import { QuestionDialog } from './components/question-dialog'
+import { SelectDialog } from './components/select-dialog'
+import { itemsFromMessages, notice, reduce, type ChatItem } from './store'
+import { theme } from './theme'
+import { Logo } from './components/logo'
 
 type Dialog =
   | { kind: 'permission'; request: PermissionRequest }
   | { kind: 'question'; request: QuestionRequest }
+  | { kind: 'select'; request: SelectRequest }
 
 export function App(props: { harness: Harness; onExit: () => void }) {
   const harness = props.harness
@@ -52,6 +55,7 @@ export function App(props: { harness: Harness; onExit: () => void }) {
 
   let editor: TextareaRenderable | undefined
   let controller: AbortController | undefined
+  let lastEscape = 0
 
   const add = (item: ChatItem) => setItems((prev) => [...prev, item])
 
@@ -88,6 +92,9 @@ export function App(props: { harness: Harness; onExit: () => void }) {
             break
           case 'question_request':
             setDialog({ kind: 'question', request: event.request })
+            break
+          case 'select_request':
+            setDialog({ kind: 'select', request: event.request })
             break
           case 'tasks_updated':
             setTasks(event.tasks)
@@ -143,6 +150,11 @@ export function App(props: { harness: Harness; onExit: () => void }) {
     } else if (key.name === 'escape' && busy() && !dialog()) {
       key.preventDefault()
       controller?.abort()
+    } else if (key.name === 'escape' && !busy() && !dialog()) {
+      // Doble Esc (en menos de medio segundo): volver a un mensaje anterior
+      const now = Date.now()
+      if (now - lastEscape < 500) void runAgent('/rewind')
+      lastEscape = now
     } else if (key.name === 'tab' && !key.shift && suggestions().length) {
       key.preventDefault()
       editor?.setText(`/${suggestions()[0]!.name}`)
@@ -161,6 +173,12 @@ export function App(props: { harness: Harness; onExit: () => void }) {
     const d = dialog()
     return d?.kind === 'permission' ? d.request : undefined
   }
+
+  const selectRequest = () => {
+    const d = dialog()
+    return d?.kind === 'select' ? d.request : undefined
+  }
+
   const questionRequest = () => {
     const d = dialog()
     return d?.kind === 'question' ? d.request : undefined
@@ -230,6 +248,11 @@ export function App(props: { harness: Harness; onExit: () => void }) {
       <Show when={permissionRequest()} keyed>
         {(request: PermissionRequest) => (
           <PermissionDialog request={request} onDone={() => setDialog(null)} />
+        )}
+      </Show>
+      <Show when={selectRequest()} keyed>
+        {(request: SelectRequest) => (
+          <SelectDialog request={request} onDone={() => setDialog(null)} />
         )}
       </Show>
       <Show when={questionRequest()} keyed>

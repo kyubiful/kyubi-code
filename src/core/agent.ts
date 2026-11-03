@@ -267,6 +267,8 @@ export class Agent implements AgentRunner {
       signal,
       agentId: this.id,
       emit,
+      // Los cambios de archivos viajan como eventos: así llegan a la sesión en orden
+      recordFileChange: (change) => emit({ type: 'file_changed', change }),
       ask: interactive
         ? {
             question: (questions) =>

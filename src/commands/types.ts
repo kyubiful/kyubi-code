@@ -4,6 +4,11 @@ export type CommandContext = {
   args: string // lo que va después de "/nombre "
   harness: Harness
   print(text: string, level?: 'info' | 'error'): void // la TUI y el headless lo pintan distinto
+  // Pide al usuario que elija una opción (devuelve su índice, o null si cancela)
+  select(
+    title: string,
+    options: { label: string; description?: string }[],
+  ): Promise<number | null>
 }
 
 export type CommandResult =

@@ -2,11 +2,11 @@ import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { appendFile, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { ConfigSchema } from '../core/config.ts'
-import { userMessage } from '../core/types.ts'
-import { Harness } from '../harness.ts'
-import { MockProvider } from '../providers/mock.ts'
-import { SessionStore } from './store.ts'
+import { ConfigSchema } from '../core/config'
+import { userMessage } from '../core/types'
+import { Harness } from '../harness'
+import { MockProvider } from '../providers/mock'
+import { SessionStore } from './store'
 
 let dir: string
 beforeEach(async () => {

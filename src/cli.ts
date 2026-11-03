@@ -22,6 +22,7 @@ if (values.help) {
   console.log(`Uso: kyubi [opciones]
         kyubi login <provider>
         kyubi logout <provider>
+        kyubi sessions [rm <id>]
 
   -p, --prompt <prompt>  Modo headless: ejecuta el prompt e imprime la respuesta
       --provider <id>    Provider a usar (por defecto: el de la config)
@@ -50,6 +51,18 @@ try {
     console.log(
       removed ? `Sesión cerrada en ${arg}` : `No había sesión en ${arg}`,
     )
+  } else if (command === 'sessions') {
+    const { deleteSession, listSessions } = await import('./session/manager')
+    if (arg === 'rm') {
+      const id = positionals[2]
+      if (!id) throw new Error('Uso: kyubi sessions rm <id>')
+      console.log(`Borrada: ${await deleteSession(process.cwd(), id)}`)
+    } else {
+      for (const session of await listSessions(process.cwd())) {
+        const date = new Date(session.updatedAt).toLocaleString()
+        console.log(`${session.id.slice(0, 8)} ${date} ${session.title}`)
+      }
+    }
   } else if (command) {
     throw new Error(`Comando desconocido: ${command}. Usa kyubi --help`)
   } else if (values.prompt !== undefined) {
