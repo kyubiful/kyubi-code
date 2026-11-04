@@ -274,6 +274,22 @@ export function builtinCommands(): Command[] {
       },
     },
     {
+      name: 'compact',
+      description: 'Resume la conversación para liberar contexto',
+      argsHint: '[instrucciones]',
+      source: 'builtin',
+      async run({ args, harness, print }) {
+        print('Compactando...')
+        const done = await harness.compact(args || undefined)
+        print(
+          done
+            ? 'Conversación compactada'
+            : 'No hay suficiente conversación que compactar',
+        )
+        return handled
+      },
+    },
+    {
       name: 'tasks',
       description: 'Muestra la lista de tareas',
       source: 'builtin',

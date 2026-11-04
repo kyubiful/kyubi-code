@@ -93,6 +93,13 @@ export function reduce(items: ChatItem[], event: AgentEvent): ChatItem[] {
       ]
     case 'notice':
       return [...items, notice(event.text, event.level)]
+    case 'compaction':
+      return [
+        ...items,
+        notice(
+          `Conversación compactada (${event.tokensBefore} tokens resumidos)`,
+        ),
+      ]
     case 'session_loaded':
       return itemsFromMessages(event.messages)
     case 'done':

@@ -6,7 +6,7 @@ import { builtinCommands } from './commands/builtin'
 import { loadCustomCommands } from './commands/custom'
 import { CommandRegistry, parseCommand } from './commands/index'
 import type { Command } from './commands/types'
-import { Agent } from './core/agent'
+import { Agent, type Compacted } from './core/agent'
 import { Channel } from './core/channel'
 import {
   configPaths,
@@ -20,7 +20,7 @@ import { Permissions, type PermissionMode } from './core/permissions'
 import { findModel, type ModelInfo, type Provider } from './core/provider'
 import { TaskStore } from './core/tasks'
 import { ToolRegistry, errorMessage } from './core/tools'
-import { messageText, newId, type Message } from './core/types'
+import { messageText, newId, type Message, type Usage } from './core/types'
 import { UsageTracker } from './core/usage'
 import { createProvider } from './providers'
 import {
@@ -28,6 +28,7 @@ import {
   restoreCheckpoints,
   type RewindMode,
 } from './session/checkpoints'
+import { splitPoint, summarize, summaryMessages } from './session/compaction'
 import { cleanupSessions, generateTitle } from './session/manager'
 import { SessionStore } from './session/store'
 import { buildinTools } from './tools'
@@ -179,6 +180,8 @@ export class Harness {
       sessionId: this.session.id,
       permissions: this.permissions,
       reminder: () => this.tasks.reminder(),
+      maybeCompact: (messages, lastUsage, signal) =>
+        this.maybeCompact(messages, lastUsage, signal),
       messages,
     })
   }
@@ -267,7 +270,71 @@ export class Harness {
         break
       case 'tasks_updated':
         this.session.append({ type: 'tasks', tasks: event.tasks })
+        break
+      case 'compaction':
+        this.session.append({
+          type: 'compaction',
+          summary: event.summary,
+          summaryId: event.summaryId,
+          firstKeptId: event.firstKeptId,
+        })
+        this.usage.reset()
+        break
     }
+  }
+
+  // compaction automática: solo si está activada y se ha pasado del umbral
+  private async maybeCompact(
+    messages: Message[],
+    lastUsage: Usage | undefined,
+    signal: AbortSignal,
+  ): Promise<Compacted | undefined> {
+    const { auto, threshold } = this.config.compaction
+    if (!auto || !lastUsage) return undefined
+    const used = lastUsage.inputTokens + lastUsage.outputTokens
+    if (used < this.model.contextWindow * threshold) return undefined
+    return this.buildCompaction(messages, signal)
+  }
+
+  private async buildCompaction(
+    messages: Message[],
+    signal: AbortSignal,
+    instructions?: string,
+  ): Promise<Compacted | undefined> {
+    const keepFrom = splitPoint(messages, this.config.compaction.keepLast)
+    if (keepFrom === 0) return undefined // no hay nada que resumir
+    const summary = await summarize(
+      this.provider,
+      this.model.id,
+      messages.slice(0, keepFrom),
+      signal,
+      instructions,
+    )
+    const summaryId = newId()
+    return {
+      messages: [
+        ...summaryMessages(summary, summaryId),
+        ...messages.slice(keepFrom),
+      ],
+      summary,
+      summaryId,
+      firstKeptId: messages[keepFrom]?.id ?? null,
+    }
+  }
+
+  // /compact: compactar ahora, con instrucciones opcionales
+  async compact(instructions?: string): Promise<boolean> {
+    const compacted = await this.buildCompaction(
+      this.agent.messages,
+      AbortSignal.timeout(180_000),
+      instructions,
+    )
+    if (!compacted) return false
+    const { summary, summaryId, firstKeptId } = compacted
+    this.session.append({ type: 'compaction', summary, summaryId, firstKeptId })
+    this.usage.reset()
+    this.agent = this.createAgent(this.session.messages())
+    return true
   }
 
   private ensureTitle(): void {
