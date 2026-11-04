@@ -21,6 +21,12 @@ export type SessionEntryBody =
   | { type: 'message'; message: Message } // id de la entrada = message.id
   | { type: 'usage'; usage: Usage; model: string }
   | { type: 'tasks'; tasks: Task[] }
+  | {
+      type: 'compaction'
+      summary: string
+      summaryId: string
+      firstKeptId: string | null
+    }
   | { type: 'compaction'; sumary: string; firstKeptId: string } //
   | { type: 'checkpoint'; messageId: string; changes: FileChange[] } //
   | { type: 'rewind' }
