@@ -25,6 +25,12 @@ import { UsageTracker } from './core/usage'
 import { HookRunner } from './hooks/runner'
 import { createProvider } from './providers'
 import {
+  loadSkills,
+  skillCommands,
+  skillTool,
+  type SkillMeta,
+} from './skills/index'
+import {
   checkpointsAfter,
   restoreCheckpoints,
   type RewindMode,
@@ -45,6 +51,7 @@ export type HarnessOptions = {
   system?: string // system prompt (create() lo construye con buildSystemPrompt)
   interactive?: boolean // false: nadie puede responder a las preguntas de permisos
   commands?: Command[] // comandos .md del usuario y del proyecto
+  skills?: SkillMeta[]
   session?: SessionStore // sesión retomada. Si no, se crea una nueva
 }
 
@@ -79,6 +86,7 @@ export class Harness {
     const config = await loadConfig(cwd, overrides)
     const system = await buildSystemPrompt(cwd)
     const commands = await loadCustomCommands(cwd)
+    const skills = await loadSkills(cwd)
     await cleanupSessions(cwd, config.sessions.retentionDays)
     let session: SessionStore | undefined
     if (opts.resume === 'latest') {
@@ -89,9 +97,10 @@ export class Harness {
     const harness = new Harness({
       config,
       cwd,
-      interactive,
+      interactive: opts.interactive,
       system,
       commands,
+      skills,
       session,
     })
     await harness.sessionStart(session ? 'resume' : 'new')
@@ -130,6 +139,7 @@ export class Harness {
       ...webTools(),
       questionTool,
       ...taskTools(this.tasks),
+      ...(opts.skills?.length ? [skillTool(opts.skills)] : []),
       // echo solo hace falta para el guion por defecto del mock
       ...(this.provider.id === 'mock' ? [echoTool] : []),
     ])
@@ -140,6 +150,8 @@ export class Harness {
     )
     this.commands = new CommandRegistry([
       ...builtinCommands(),
+      // Los comandos .md van después: si se llaman igual que una skill, ganan
+      ...skillCommands(opts.skills ?? []),
       ...(opts.commands ?? []),
     ])
     this.session = opts.session ?? SessionStore.create(this.cwd)
