@@ -21,6 +21,13 @@ export const ConfigSchema = z.object({
   hooks: z.record(z.string(), z.unknown()).default({}),
   mcpServers: z.record(z.string(), z.unknown()).default({}),
   env: z.record(z.string(), z.string()).default({}),
+  compaction: z
+    .object({
+      auto: z.boolean().default(true),
+      threshold: z.number().min(0).max(1).default(0.8), // fracción de la ventana de contexto
+      keepLast: z.number().int().min(0).default(6), // mensajes recientes que no se resumen
+    })
+    .prefault({}),
   sessions: z
     .object({
       retentionDays: z.number().int().min(0).default(30), // 0 = no borrar nunca
