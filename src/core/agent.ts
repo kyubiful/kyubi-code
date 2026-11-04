@@ -6,7 +6,13 @@ import { Mutex } from './mutex'
 import type { AgentEvent, AgentEventBody } from './events'
 import { ProviderError, type Provider, type StopReason } from './provider'
 import { errorMessage, type ToolContext, type ToolRegistry } from './tools'
-import { newId, userMessage, type ContentBlock, type Message } from './types'
+import {
+  newId,
+  userMessage,
+  type ContentBlock,
+  type Message,
+  type Usage,
+} from './types'
 
 export type AgentOptions = {
   provider: Provider
@@ -24,6 +30,20 @@ export type AgentOptions = {
   // Texto que se aade al final de cada petición sin guardarlo en el historial
   // (ej. el recordatorio de tareas abiertas)
   reminder?: () => string | undefined
+  // Antes de cada llamada al modelo: si devuelve algo, el historial se sustituye por
+  // la versión compactada. Lo decide el harness, que conoce la config
+  maybeCompact?: (
+    messages: Message[],
+    lastUsage: Usage | undefined,
+    signal: AbortSignal,
+  ) => Promise<Compacted | undefined>
+}
+
+export type Compacted = {
+  messages: Message[]
+  summary: string
+  summaryId: string
+  firstKeptId: string | null
 }
 
 // Lo que la TUI y los subagentes necesitan de un agente.
@@ -45,6 +65,8 @@ export class Agent implements AgentRunner {
   private queued: string[] = []
   // Un solo diálogo con el usuario a la vez
   private dialogs = new Mutex()
+  // Uso del último turno: decide si hay que compactar
+  private lastUsage: Usage | undefined
 
   constructor(private opts: AgentOptions) {
     this.id = opts.agentId ?? 'main'
@@ -80,6 +102,7 @@ export class Agent implements AgentRunner {
     const maxTurns = this.opts.maxTurns ?? 50
 
     for (let turn = 1; turn <= maxTurns; turn++) {
+      await this.compactIfNeeded(signal, emit)
       emit({ type: 'turn_start', turn })
       const { blocks, stopReason } = await this.streamTurn(signal, emit)
       if (blocks.length) {
@@ -168,6 +191,7 @@ export class Agent implements AgentRunner {
               blocks.push({ ...event, type: 'tool_use' })
               break
             case 'usage':
+              this.lastUsage = event.usage
               emit(event)
               break
             case 'done':
@@ -190,6 +214,26 @@ export class Agent implements AgentRunner {
         )
       }
     }
+  }
+
+  private async compactIfNeeded(signal: AbortSignal, emit: Emit) {
+    const compacted = await this.opts.maybeCompact?.(
+      this.messages,
+      this.lastUsage,
+      signal,
+    )
+    if (!compacted) return
+    const tokensBefore =
+      (this.lastUsage?.inputTokens ?? 0) + (this.lastUsage?.outputTokens ?? 0)
+    this.messages = compacted.messages
+    this.lastUsage = undefined
+    emit({
+      type: 'compaction',
+      summary: compacted.summary,
+      summaryId: compacted.summaryId,
+      firstKeptId: compacted.firstKeptId,
+      tokensBefore,
+    })
   }
 
   // Las tools de solo lectura seguidas se ejecutan en pralelo. Las que escriben,

@@ -30,6 +30,13 @@ export type AgentEventBody =
   | { type: 'tasks_updated'; tasks: Task[] }
   | { type: 'notice'; level: 'info' | 'error'; text: string } // salida de los /comandos
   | { type: 'session_loaded'; messages: Message[] } // /clear, /resume: la TUI se redibuja
+  | {
+      type: 'compaction' // la conversación se ha resumido
+      summary: string
+      summaryId: string
+      firstKeptId: string | null
+      tokensBefore: number
+    }
   | { type: 'file_changed'; change: FileChange } // write/edit: se guarda como checkpoint
   | { type: 'select_request'; request: SelectRequest } // un /comando pide elegir algo
 

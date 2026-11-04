@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { kyubiHome, projectRoot } from '../core/paths'
 import type { Task } from '../core/tasks'
 import { newId, type Message } from '../core/types'
+import { summaryMessages } from './compaction'
 import type { SessionEntry, SessionEntryBody, SessionHeader } from './types'
 
 export class SessionStore {
@@ -164,11 +165,25 @@ export class SessionStore {
     return path.reverse()
   }
 
-  // Los mensajes qeu hay que enviar al modelo
+  // Los mensajes que hay que enviar al modelo. Una entrada `compaction` sustituye
+  // todo lo anterior por el resumen, salvo los mensajes que se conservaron
   messages(): Message[] {
-    return this.branch().flatMap((entry) =>
-      entry.type === 'message' ? [entry.message] : [],
-    )
+    let messages: Message[] = []
+    for (const entry of this.branch()) {
+      if (entry.type === 'message') messages.push(entry.message)
+      else if (entry.type === 'compaction') {
+        const kept = entry.firstKeptId
+          ? messages.slice(
+              Math.max(
+                0,
+                messages.findIndex((m) => m.id === entry.firstKeptId),
+              ),
+            )
+          : []
+        messages = [...summaryMessages(entry.summary, entry.summaryId), ...kept]
+      }
+    }
+    return messages
   }
 
   tasks(): Task[] {
