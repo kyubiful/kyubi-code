@@ -3,6 +3,7 @@
 // config.local.json es para tus ajustes personales del proyecto (añádelo a .gitignore)
 import { join } from 'node:path'
 import { z } from 'zod'
+import { HookSchema } from '../hooks/types'
 import { kyubiHome, projectDir } from './paths'
 
 // Schema-first: el tipo Config se deriva del schema, no se escribe dos veces.
@@ -18,7 +19,7 @@ export const ConfigSchema = z.object({
       deny: z.array(z.string()).default([]),
     })
     .prefault({}),
-  hooks: z.record(z.string(), z.unknown()).default({}),
+  hooks: HookSchema.default({}),
   mcpServers: z.record(z.string(), z.unknown()).default({}),
   env: z.record(z.string(), z.string()).default({}),
   compaction: z

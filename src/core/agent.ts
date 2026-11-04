@@ -1,4 +1,5 @@
 // El agent loop: llama al modelo, ejecuta las tools y repite
+import type { HookRunner } from '../hooks/runner'
 import { Channel } from './channel'
 import type { PermissionAnswer, Permissions } from './permissions'
 import type { QuestionAnswer } from './questions'
@@ -30,6 +31,7 @@ export type AgentOptions = {
   // Texto que se aade al final de cada petición sin guardarlo en el historial
   // (ej. el recordatorio de tareas abiertas)
   reminder?: () => string | undefined
+  hooks?: HookRunner
   // Antes de cada llamada al modelo: si devuelve algo, el historial se sustituye por
   // la versión compactada. Lo decide el harness, que conoce la config
   maybeCompact?: (
@@ -279,14 +281,52 @@ export class Agent implements AgentRunner {
     })
     const started = performance.now()
 
-    const denied = await this.checkPermission(use, signal, emit)
+    const hooks = this.opts.hooks
+    const warn = (warnings?: string[]) =>
+      warnings?.forEach((text) =>
+        emit({ type: 'notice', level: 'error', text }),
+      )
+    // PreToolUse: los hooks pueden bloquear la tool o cambiar su input
+    let input = use.input
+    let blocked: string | undefined
+    if (hooks?.has('PreToolUse')) {
+      const pre = await hooks.run(
+        { event: 'PreToolUse', toolName: use.name, input },
+        use.name,
+      )
+      warn(pre.warnings)
+      if (pre.decision === 'block')
+        blocked = `Bloqueado por un hook: ${pre.reason ?? ''}`
+      if (pre.updatedInput !== undefined) input = pre.updatedInput
+    }
+    const denied =
+      blocked ?? (await this.checkPermission({ ...use, input }, signal, emit))
     const result = denied
       ? { content: denied, isError: true }
       : await this.opts.tools.run(
           use.name,
-          use.input,
+          input,
           this.toolContext(signal, emit),
         )
+
+    // PostToolUse: los hooks pueden añadir información para el modelo
+    if (!denied && hooks?.has('PostToolUse')) {
+      const post = await hooks.run(
+        {
+          event: 'PostToolUse',
+          toolName: use.name,
+          input,
+          result: result.content,
+          isError: result.isError,
+        },
+        use.name,
+      )
+      warn(post.warnings)
+      if (post.additionalContext)
+        result.content += `\n\n<hook>\n${post.additionalContext}\n</hook>`
+      if (post.decision === 'block')
+        result.content += `\n\n<hook>\n${post.reason ?? ''}\n</hook>`
+    }
 
     emit({
       type: 'tool_end',

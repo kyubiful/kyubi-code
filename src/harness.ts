@@ -22,6 +22,7 @@ import { TaskStore } from './core/tasks'
 import { ToolRegistry, errorMessage } from './core/tools'
 import { messageText, newId, type Message, type Usage } from './core/types'
 import { UsageTracker } from './core/usage'
+import { HookRunner } from './hooks/runner'
 import { createProvider } from './providers'
 import {
   checkpointsAfter,
@@ -57,7 +58,8 @@ export type CreateOption = {
 export class Harness {
   readonly config: Config
   readonly cwd: string
-  readonly system: string
+  system: string
+  readonly hooks: HookRunner
   readonly tools: ToolRegistry
   readonly permissions: Permissions
   readonly commands: CommandRegistry
@@ -84,7 +86,7 @@ export class Harness {
     } else if (opts.resume) {
       session = await SessionStore.find(cwd, opts.resume)
     }
-    return new Harness({
+    const harness = new Harness({
       config,
       cwd,
       interactive,
@@ -92,6 +94,18 @@ export class Harness {
       commands,
       session,
     })
+    await harness.sessionStart(session ? 'resume' : 'new')
+    return harness
+  }
+
+  // SessionStart: lo que devuelvan los hooks se añade al system prompt
+  async sessionStart(source: 'new' | 'resume'): Promise<void> {
+    if (!this.hooks.has('SessionStart')) return
+    const result = await this.hooks.run({ event: 'SessionStart', source })
+    if (result.additionalContext) {
+      this.system += `\n\n# Contexto de los hooks\n\n${result.additionalContext}`
+      this.agent = this.createAgent(this.agent.messages)
+    }
   }
 
   constructor(opts: HarnessOptions) {
@@ -102,6 +116,11 @@ export class Harness {
     this.model = findModel(
       this.provider,
       this.config.model ?? this.provider.models()[0]!.id,
+    )
+    this.hooks = new HookRunner(
+      this.config.hooks,
+      this.cwd,
+      () => this.session.id,
     )
     // Las variables de `env` de la config llegan así a los comandos de bash
     Object.assign(process.env, this.config.env)
@@ -179,6 +198,7 @@ export class Harness {
       cwd: this.cwd,
       sessionId: this.session.id,
       permissions: this.permissions,
+      hooks: this.hooks,
       reminder: () => this.tasks.reminder(),
       maybeCompact: (messages, lastUsage, signal) =>
         this.maybeCompact(messages, lastUsage, signal),
@@ -237,10 +257,50 @@ export class Harness {
       if (prompt === undefined) return
       text = prompt
     }
+
+    // UserPromptSubmit: los hooks pueden bloquear el mensaje o añadirle contexto
+    if (this.hooks.has('UserPromptSubmit')) {
+      const result = await this.hooks.run({
+        event: 'UserPromptSubmit',
+        prompt: text,
+      })
+      for (const warning of result.warnings ?? [])
+        yield this.notice(warning, 'error')
+      if (result.decision === 'block') {
+        yield this.notice(
+          `Mensaje bloqueado por un hook: ${result.reason ?? ''}`,
+          'error',
+        )
+        return
+      }
+      if (result.additionalContext) {
+        text += `\n\n<hook>\n${result.additionalContext}\n</hook>`
+      }
+    }
+
+    yield* this.runAgent(text, signal)
+
+    // Stop: un hook puede pedir que el agente siga (una vezm para evibar bucles)
+    if (this.hooks.has('Stop') && !signal.aborted) {
+      const result = await this.hooks.run({ event: 'Stop' })
+      if (result.decision === 'block' && result.reason) {
+        yield* this.runAgent(result.reason, signal)
+      }
+    }
+  }
+
+  private async *runAgent(
+    text: string,
+    signal: AbortSignal,
+  ): AsyncIterable<AgentEvent> {
     for await (const event of this.agent.run(text, signal)) {
       this.record(event)
       yield event
     }
+  }
+
+  private notice(text: string, level: 'info' | 'error' = 'info'): AgentEvent {
+    return { type: 'notice', level, text, agentId: 'main' }
   }
 
   // Lo que hay que guardar en cada evento
