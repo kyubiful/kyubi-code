@@ -27,7 +27,6 @@ export type SessionEntryBody =
       summaryId: string
       firstKeptId: string | null
     }
-  | { type: 'compaction'; summary: string; firstKeptId: string } //
   | { type: 'checkpoint'; messageId: string; changes: FileChange[] } //
   | { type: 'rewind' }
   | {
